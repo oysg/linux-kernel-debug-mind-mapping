@@ -1,0 +1,200 @@
+kprobes 主要用来对内核进行调试追踪, 属于比较轻量级的机制, 本质上是在指定的探测点(比如函数的某行, 函数的入口地址和出口地址, 或者内核的指定地址处)插入一组处理程序. 内核执行到这组处理程序的时候就可以获取到当前正在执行的上下文信息, 比如当前的函数名, 函数处理的参数以及函数的返回值, 也可以获取到寄存器甚至全局数据结构的信息。
+
+
+uprobes 用来跟踪用户态的函数，包括用于函数调用的 uprobe 和用于函数返回的 uretprobe。
+
+1、进入debugfs目录
+$ cd /sys/kernel/debug/tracing
+如果找不到目录，执行下列命令挂载debugfs：
+$ mount -t debugfs nodev /sys/kernel/debug
+
+2、查询支持的追踪器
+$ cat available_tracers
+常用的有两种：
+
+function 表示跟踪函数的执行；
+function_graph 则是跟踪函数的调用关系；
+3、查看支持追踪的内核函数和事件。其中函数就是内核中的函数名，而事件，则是内核源码中预先定义的跟踪点。
+//查看内核函数
+$ cat availablefilterfunctions
+//查看事件
+$ cat available_events
+
+4、设置追踪函数：
+$ echo dosysopen > setgraphfunction
+
+5、设置追踪器
+$ echo functiongraph > currenttracer
+$ echo funcgraph-proc > trace_options
+
+6、开启追踪
+$ echo 1 > tracing_on
+
+7、执行一个 ls 命令后，再关闭跟踪
+$ ls
+$ echo 0 > tracing_on
+
+8、最后一步，查看跟踪结果
+$ cat trace
+
+
+
+
+
+
+1、记录
+$ trace-cmd record -p functiongraph -g dosys_open -O funcgraph-proc ls
+
+2、显示
+$ trace-cmd report
+
+
+
+
+main.c
+
+include
+include
+include
+void main()
+{
+printf("hello, pid=%d\n", getpid());
+while(1) {
+printf("begin sleep...\n");
+sleep(1);
+}
+}
+运行：
+$ perf stat ./main
+
+task-clock:用于执行程序的cpu时间；
+context-switches：程序在运行过程中经历的上下文切换次数；
+page-faults：进程运行过程中产生的缺页次数；
+cpu-migrations：程序在运行过程中发生的CPU迁移次数，即被调度器从一个CPU转移到另外一个CPU上运行；
+instructions：该进程在这段时间内完成的CPU指令数；
+cycles：CPU时钟周期；
+
+
+
+
+
+main.c
+
+include
+include
+include
+void main()
+{
+printf("hello, pid=%d\n", getpid());
+while(1) {
+printf("begin sleep...\n");
+sleep(1);
+}
+}
+
+
+$ git clone https://github.com/brendangregg/FlameGraph
+$ cd FlameGraph
+
+$ perf script -i ./perf.data | ./stackcollapse-perf.pl --all | ./flamegraph.pl > show.svg
+
+打开浏览器，输入：localhost:8080/show.svg
+
+
+
+
+时间格式：msec.usec
+
+wait time
+time between sched-out and next sched-in events for the task;
+
+task scheduling delay
+time between wakeup and actually running;
+
+run time
+run time for the task;
+
+
+
+
+1、添加 dosysopen 探针
+$ perf probe --add dosysopen
+
+2、采样和追踪
+$ perf record -e probe:dosysopen -aR sleep 1
+
+3、查看采样结果
+$ perf script
+
+4、删除探针
+$ perf probe --del probe:dosysopen
+
+
+
+安装(ubuntu 18.04)：
+$ apt-get install -y systemtap-runtime systemtap
+$ echo "deb http://ddebs.ubuntu.com $(lsbrelease -cs) main restricted universe multiversedeb http://ddebs.ubuntu.com $(lsbrelease -cs)-updates main restricted universe multiversedeb http://ddebs.ubuntu.com $(lsb_release -cs)-proposed main restricted universe multiverse" | \sudo tee -a /etc/apt/sources.list.d/ddebs.list
+$ apt-key adv --keyserver keyserver.ubuntu.com --recv-keys F2EDC64DC5AEE1F6B9C621F0C8CAB6595FDFF622
+$ apt-get update
+$ apt install ubuntu-dbgsym-keyring
+$ stap-prep
+$ apt-get install linux-image-uname -r-dbgsym
+
+
+
+
+这是一个例子：
+1, systemtap脚本文件如下：
+vim dropwatch.stp
+
+!/usr/bin/env stap
+#
+Dropwatch.stp
+Author: Neil Horman nhorman@redhat.com
+An example script to mimic the behavior of the dropwatch utility
+http://fedorahosted.org/dropwatch
+#
+Array to hold the list of drop points we find
+global locations
+
+Note when we turn the monitor on and off
+probe begin { printf("Monitoring for dropped packets\n") }
+probe end { printf("Stopping dropped packet monitor\n") }
+
+increment a drop counter for every location we drop at
+probe kernel.trace("kfree_skb") { locations[$location] <<< 1 }
+
+Every 5 seconds report our drop locations
+probe timer.sec(5)
+{
+printf("\n")
+foreach (l in locations-) {
+printf("%d packets dropped at %s\n",
+@count(locations[l]), symname(l))
+}
+delete locations
+}
+
+2,运行脚本文件
+$ stap --all-modules dropwatch.stp
+
+
+安装(ubuntu 18.04)：
+$ curl -s https://s3.amazonaws.com/download.draios.com/DRAIOS-GPG-KEY.public | sudo apt-key add -
+$ sudo curl -s -o /etc/apt/sources.list.d/draios.list https://s3.amazonaws.com/download.draios.com/stable/deb/draios.list
+$ sudo apt-get update
+$ sudo apt-get -y install linux-headers-$(uname -r)
+$ sudo apt-get -y install sysdig
+
+
+bcc用于实现复杂应用。
+【安装】
+$ sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 4052245BD4284CDD
+
+$ echo "deb https://repo.iovisor.org/apt/xenial xenial main" | sudo tee /etc/apt/sources.list.d/iovisor.list
+
+$ sudo apt-get update
+
+$ sudo apt-get install -y bcc-tools libbcc-examples linux-headers-$(uname -r)
+
+$ export PATH=$PATH:/usr/share/bcc/tools
